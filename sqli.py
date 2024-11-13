@@ -1,14 +1,18 @@
 import sqlite3
 
 def get_user_data(user_id):
-    # Directly incorporating user input into SQL query (vulnerable to SQL Injection)
-    conn = sqlite3.connect("database.db")
+    # Conexión a la base de datos
+    connection = sqlite3.connect('users.db')
+    cursor = connection.cursor()
     
-    cursor = conn.cursor()
-    query = f"SELECT * FROM users WHERE id = {user_id}"  # vulnerable to SQL injection
-    cursor.execute(query)
+    # Consulta parametrizada para evitar inyección SQL
+    query = "SELECT * FROM users WHERE id = ?"  # nosec B608
+    cursor.execute(query, (user_id,))
+
+    # Recuperación de los datos del usuario
+    user_data = cursor.fetchall()
     
-    result = cursor.fetchall()
-    conn.close()
+    # Cierre de la conexión
+    connection.close()
     
-    return result
+    return user_data
