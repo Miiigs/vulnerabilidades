@@ -1,17 +1,33 @@
 import os
 import http.server
 import cgi
+from werkzeug.utils import secure_filename
+import magic
 
 # Configuración del directorio donde se almacenarán los archivos subidos
 UPLOAD_FOLDER = 'uploads/'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-# Extensiones permitidas (de manera incorrecta, incluye archivos peligrosos)
-ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'exe', 'php'}
+# Extensiones permitidas para imágenes (de forma segura, solo imágenes)
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
+
+# Límite de tamaño de archivo (en bytes) - 5 MB por ejemplo
+MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
+
+# Función para validar la extensión del archivo
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+# Función para validar el tipo MIME del archivo (contenido)
+def is_image(file):
+    mime = magic.Magic(mime=True)
+    file_type = mime.from_buffer(file.read(1024))  # Leer solo los primeros 1024 bytes
+    file.seek(0)  # Volver al inicio del archivo después de leer
+    return file_type.startswith('image/')
 
 class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
-        """ Maneja la subida de archivos (sin validación adecuada) """
+        """ Maneja la subida de archivos con validaciones sanitizadas """
         if self.path == '/upload':
             # Recibir la información del formulario
             content_type, pdict = cgi.parse_header(self.headers['Content-Type'])
@@ -23,23 +39,48 @@ class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
                 if 'file' in form:
                     file_item = form['file']
                     if file_item.filename:
-                        # Obtener el nombre del archivo y verificar la extensión (sin validación adecuada)
+                        # Obtener el nombre del archivo y verificar la extensión
                         filename = file_item.filename
-                        if '.' in filename:
-                            # Guardar el archivo sin comprobar su contenido
-                            filepath = os.path.join(UPLOAD_FOLDER, filename)
-                            with open(filepath, 'wb') as f:
-                                f.write(file_item.file.read())  # Guardamos el archivo
-
-                            self.send_response(200)
-                            self.send_header('Content-type', 'text/html')
-                            self.end_headers()
-                            self.wfile.write(b'File uploaded successfully!')
-                        else:
+                        if not allowed_file(filename):
                             self.send_response(400)
                             self.send_header('Content-type', 'text/html')
                             self.end_headers()
                             self.wfile.write(b'Invalid file extension!')
+                            return
+
+                        # Verificar el tamaño del archivo
+                        if len(file_item.file.read()) > MAX_FILE_SIZE:
+                            self.send_response(400)
+                            self.send_header('Content-type', 'text/html')
+                            self.end_headers()
+                            self.wfile.write(b'File too large!')
+                            return
+
+                        # Rehacer el seek después de leer para comprobar el contenido
+                        file_item.file.seek(0)
+                        
+                        # Validar que el archivo sea una imagen real por su contenido
+                        if not is_image(file_item.file):
+                            self.send_response(400)
+                            self.send_header('Content-type', 'text/html')
+                            self.end_headers()
+                            self.wfile.write(b'File is not a valid image!')
+                            return
+
+                        # Hacer que el nombre del archivo sea seguro
+                        safe_filename = secure_filename(filename)
+
+                        # Ruta de destino para el archivo
+                        filepath = os.path.join(UPLOAD_FOLDER, safe_filename)
+                        
+                        # Guardar el archivo de manera segura
+                        with open(filepath, 'wb') as f:
+                            f.write(file_item.file.read())
+
+                        self.send_response(200)
+                        self.send_header('Content-type', 'text/html')
+                        self.end_headers()
+                        self.wfile.write(b'File uploaded successfully!')
                     else:
                         self.send_response(400)
                         self.send_header('Content-type', 'text/html')
